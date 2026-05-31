@@ -1,0 +1,593 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>詩境藝術之旅 - 歲末終章 (頂級 3D 飛花版)</title>
+    
+    <!-- 引入 Tailwind CSS 進行 UI 排版 -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- 引入 Three.js 核心庫與控制器 -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    
+    <!-- 引入 Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+
+    <style>
+        :root {
+            --rose-gold: #b76e79;
+            --rose-gold-light: #e0bfb8;
+            --dark-bg: #0a0508;
+        }
+        
+        body, html {
+            margin: 0; padding: 0; width: 100%; height: 100%;
+            overflow: hidden;
+            font-family: 'Georgia', 'Songti TC', 'MingLiU', serif;
+            background-color: var(--dark-bg);
+            color: #fff;
+        }
+
+        #canvas-container {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 1;
+        }
+
+        #ui-layer {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 10;
+            pointer-events: none; /* 滑鼠穿透，保留 360 拖曳能力 */
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+        }
+
+        .interactive-panel {
+            pointer-events: auto;
+        }
+
+        /* 頂級博物館質感的深色毛玻璃 */
+        .glass-panel {
+            background: rgba(15, 10, 15, 0.6);
+            backdrop-filter: blur(24px);
+            -webkit-backdrop-filter: blur(24px);
+            border: 1px solid rgba(224, 191, 184, 0.15); /* 玫瑰金微光邊框 */
+            box-shadow: 0 30px 60px rgba(0, 0, 0, 0.6), inset 0 0 40px rgba(183, 110, 121, 0.05);
+            border-radius: 20px;
+            transition: all 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        .vr-btn {
+            cursor: pointer;
+            position: relative;
+            overflow: hidden;
+        }
+        .vr-btn::before {
+            content: ''; position: absolute; top: 0; left: -100%; width: 100%; height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(224, 191, 184, 0.2), transparent);
+            transition: all 0.5s ease;
+        }
+        .vr-btn:hover::before { left: 100%; }
+        .vr-btn:hover {
+            transform: scale(1.03) translateY(-2px);
+            border-color: rgba(224, 191, 184, 0.4);
+            box-shadow: 0 10px 30px rgba(183, 110, 121, 0.3);
+        }
+
+        /* 動畫過渡 */
+        .fade-in { animation: fadeIn 1.5s ease-out forwards; }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(20px); filter: blur(10px); }
+            to { opacity: 1; transform: translateY(0); filter: blur(0); }
+        }
+        .fade-out { animation: fadeOut 1s ease-in forwards; }
+        @keyframes fadeOut {
+            from { opacity: 1; transform: translateY(0); filter: blur(0); }
+            to { opacity: 0; transform: translateY(-20px); filter: blur(10px); display: none; }
+        }
+
+        /* 玫瑰金文字漸層 */
+        .text-gradient {
+            background: linear-gradient(to right, #e0bfb8 0%, #b76e79 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        /* 隱藏捲軸 */
+        textarea::-webkit-scrollbar { display: none; }
+
+        /* VR 視覺安全區 (HUD Safe Zone)：防止邊緣扭曲，集中視野 */
+        .vr-safe-zone {
+            width: 90%;
+            max-width: 680px; /* 嚴格限制寬度，確保在 VR 視野的正中央，不用轉脖子 */
+            margin: 0 auto;
+        }
+
+        /* 確保字體在 VR 中不會因為解析度而糊掉 */
+        .crisp-text {
+            transform: translateZ(0);
+            -webkit-font-smoothing: antialiased;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- 內建背景輕音樂 (使用無版權靜謐古風鋼琴/弦樂) -->
+    <audio id="bg-music" loop preload="auto">
+        <source src="https://cdn.pixabay.com/download/audio/2022/05/27/audio_1808fbf07a.mp3?filename=ambient-piano-amp-strings-10711.mp3" type="audio/mpeg">
+    </audio>
+
+    <!-- 3D 畫布 -->
+    <div id="canvas-container"></div>
+    
+    <!-- 邊緣暗角，增加電影感 -->
+    <div class="absolute inset-0 bg-radial-gradient from-transparent via-transparent to-black/80 pointer-events-none z-0"></div>
+
+    <div id="ui-layer">
+        
+        <!-- 右上角控制列 -->
+        <div class="absolute top-8 right-8 flex space-x-5 z-50">
+            <button id="immersive-btn" class="interactive-panel glass-panel p-4 rounded-full vr-btn text-[#e0bfb8] hidden hover:text-white" title="隱藏文字欣賞環景">
+                <i data-lucide="eye-off" class="w-6 h-6"></i>
+            </button>
+            <button id="mute-btn" class="interactive-panel glass-panel p-4 rounded-full vr-btn text-[#e0bfb8] hidden hover:text-white">
+                <i data-lucide="volume-2" class="w-6 h-6"></i>
+            </button>
+        </div>
+
+        <!-- Stage -1: 啟動畫面 -->
+        <div id="stage-start" class="interactive-panel flex flex-col items-center space-y-10 text-center vr-safe-zone crisp-text transition-opacity duration-1000">
+            <i data-lucide="flower-2" class="w-14 h-14 text-[#e0bfb8] drop-shadow-[0_0_15px_rgba(183,110,121,0.5)]"></i>
+            <h1 class="text-4xl md:text-5xl font-light tracking-[0.4em] text-white drop-shadow-2xl">
+                詩境藝術之旅
+            </h1>
+            <p class="text-lg md:text-xl tracking-[0.5em] text-[#e0bfb8] font-light">— 歲末終章 —</p>
+            
+            <p class="text-sm tracking-[0.2em] text-gray-400 mt-8">戴上 VR 裝置，或拖曳畫面以環顧四周</p>
+            
+            <button onclick="startExperience()" class="mt-6 px-12 py-4 rounded-full glass-panel vr-btn text-base tracking-[0.4em] flex items-center space-x-4 border border-[#b76e79]/50 bg-black/20">
+                <span class="text-white font-light">步入花海</span>
+            </button>
+        </div>
+
+        <!-- Stage 0: 歲月回顧 -->
+        <div id="stage-0" class="interactive-panel flex flex-col items-center space-y-8 text-center vr-safe-zone hidden ui-content crisp-text">
+            <div class="glass-panel p-10 md:p-12 rounded-3xl w-full flex flex-col items-center relative overflow-hidden">
+                <div class="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-[#b76e79] to-transparent opacity-50"></div>
+                
+                <h2 class="text-2xl md:text-3xl text-gradient tracking-[0.4em] font-light mb-8">四季流轉，繁花似錦</h2>
+                
+                <div class="space-y-5 text-base md:text-lg leading-loose tracking-[0.2em] text-gray-200 font-light">
+                    <p>從正月的傲骨寒梅，到四月的國色牡丹，</p>
+                    <p>走過六月的翠蓋紅衣，直至臘月的凌波水仙。</p>
+                    <div class="w-10 h-px bg-[#b76e79]/40 mx-auto my-6"></div>
+                    <p class="text-[#e0bfb8] font-medium tracking-[0.25em]">
+                        十二位花神，十二段詩意，<br/>已全數化作這片無垠天地間的落英繽紛。
+                    </p>
+                </div>
+                
+                <button onclick="nextStage(1)" class="mt-10 px-10 py-3 rounded-full glass-panel vr-btn text-sm tracking-[0.4em] flex items-center space-x-3 text-[#e0bfb8] hover:text-white">
+                    <span>銘記此刻</span>
+                </button>
+            </div>
+        </div>
+
+        <!-- Stage 1: 互動留言 -->
+        <div id="stage-1" class="interactive-panel flex flex-col items-center space-y-6 vr-safe-zone hidden ui-content crisp-text">
+            <div class="glass-panel p-8 md:p-12 rounded-3xl w-full flex flex-col items-center relative">
+                <h3 class="text-lg md:text-xl tracking-[0.25em] text-white/90 drop-shadow-sm mb-8 text-center leading-loose font-light">
+                    在旅途的終點，<br/>請為這十二個月的詩境留下一句結語：
+                </h3>
+                
+                <!-- 詩意碎片快選 (稍微縮小按鈕間距，適應 VR 射線點擊) -->
+                <div class="flex flex-wrap justify-center gap-3 w-full mb-8" id="fragment-container">
+                    <!-- JS 動態生成 -->
+                </div>
+
+                <div class="w-full relative">
+                    <textarea id="poem-input" placeholder="點選上方詞彙組合，或在此輸入..." class="w-full h-28 bg-black/40 border border-[#b76e79]/30 rounded-2xl p-5 text-lg text-white/90 placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-[#e0bfb8]/50 resize-none tracking-widest transition-all"></textarea>
+                    <button onclick="clearInput()" class="absolute top-3 right-3 text-gray-400 hover:text-[#e0bfb8] text-xs tracking-widest p-2">清除</button>
+                </div>
+
+                <button id="submit-btn" onclick="submitPoem()" class="mt-8 px-12 py-3 rounded-full bg-[#b76e79]/40 hover:bg-[#b76e79]/70 border border-[#e0bfb8]/40 vr-btn text-base tracking-[0.4em] text-white opacity-40 cursor-not-allowed transition-all" disabled>
+                    <span>化作飛花</span>
+                </button>
+            </div>
+        </div>
+
+        <!-- Stage 2: 結語 -->
+        <div id="stage-2" class="interactive-panel flex flex-col items-center space-y-8 vr-safe-zone hidden ui-content text-center crisp-text">
+            <div class="glass-panel p-10 md:p-14 rounded-3xl w-full flex flex-col items-center relative overflow-hidden">
+                <div class="absolute inset-0 bg-[#b76e79]/5 blur-3xl rounded-full"></div>
+                
+                <i data-lucide="sparkles" class="w-12 h-12 text-[#e0bfb8] mb-8 relative z-10"></i>
+                <p class="text-xl md:text-2xl tracking-[0.3em] leading-loose text-white/90 font-light mb-12 relative z-10">
+                    您的詩意，已永遠鐫刻於這片花海之中。
+                </p>
+                
+                <div class="w-full max-w-2xl relative z-10">
+                    <div class="px-10 py-10 rounded-2xl italic text-2xl md:text-3xl text-[#e0bfb8] tracking-[0.2em] leading-relaxed border border-[#b76e79]/20 bg-black/30 shadow-2xl">
+                        「 <span id="final-poem-display"></span> 」
+                    </div>
+                </div>
+
+                <div class="space-y-6 mt-16 relative z-10">
+                    <h1 class="text-3xl font-light tracking-[0.5em] text-white">全劇終</h1>
+                    <p class="text-sm tracking-widest text-gray-400">感謝您完成《詩境藝術之旅》</p>
+                </div>
+                
+                <p class="text-xs tracking-widest text-[#b76e79] mt-12 animate-pulse font-light relative z-10">
+                    ( 點擊右上角 <i data-lucide="eye-off" class="w-4 h-4 inline-block"></i> 按鈕，靜心欣賞這片落英繽紛 )
+                </p>
+            </div>
+        </div>
+
+        <!-- 底部進度指示器 -->
+        <div id="progress-indicator" class="absolute bottom-10 left-0 right-0 flex justify-center space-x-5 hidden ui-content">
+            <div class="progress-dot w-2 h-2 rounded-full bg-white/20 transition-all duration-700" id="dot-0"></div>
+            <div class="progress-dot w-2 h-2 rounded-full bg-white/20 transition-all duration-700" id="dot-1"></div>
+            <div class="progress-dot w-2 h-2 rounded-full bg-white/20 transition-all duration-700" id="dot-2"></div>
+        </div>
+    </div>
+
+    <script>
+        lucide.createIcons();
+
+        // --- Three.js 高質感實體花瓣 3D 引擎 ---
+        let scene, camera, renderer, controls;
+        let petals = []; // 儲存獨立的花瓣 Mesh
+        let isAutoRotating = true;
+        
+        function initThreeJS() {
+            const container = document.getElementById('canvas-container');
+            
+            // 1. 場景與唯美迷霧
+            scene = new THREE.Scene();
+            // 深邃優雅的背景色 (曜石黑偏酒紅)
+            scene.background = new THREE.Color(0x0a0508); 
+            scene.fog = new THREE.FogExp2(0x0a0508, 0.001);
+
+            // 2. 攝影機
+            camera = new THREE.PerspectiveCamera(65, window.innerWidth / window.innerHeight, 0.1, 2000);
+            camera.position.set(0, 0, 0.1); 
+
+            // 3. 渲染器 (開啟高質量渲染)
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); // 兼顧效能與畫質
+            
+            // 增強光影真實感
+            renderer.outputEncoding = THREE.sRGBEncoding;
+            renderer.toneMapping = THREE.ACESFilmicToneMapping;
+            renderer.toneMappingExposure = 1.2;
+            container.appendChild(renderer.domElement);
+
+            // 4. VR/360 軌道控制 (加入平滑慣性)
+            controls = new THREE.OrbitControls(camera, renderer.domElement);
+            controls.enableZoom = false; 
+            controls.enablePan = false;
+            controls.enableDamping = true; 
+            controls.dampingFactor = 0.04;
+            controls.autoRotate = true;
+            controls.autoRotateSpeed = 0.5; // 非常緩慢而優雅的旋轉
+            controls.addEventListener('start', () => { isAutoRotating = false; });
+
+            // 5. 建立燈光 (賦予實體花瓣質感)
+            const ambientLight = new THREE.AmbientLight(0xffe6f0, 0.6); // 柔和的玫瑰色環境光
+            scene.add(ambientLight);
+
+            const directionalLight1 = new THREE.DirectionalLight(0xffd700, 1.5); // 暖金光 (日出感)
+            directionalLight1.position.set(100, 100, 50);
+            scene.add(directionalLight1);
+            
+            const directionalLight2 = new THREE.DirectionalLight(0xb76e79, 1); // 玫瑰紅背光
+            directionalLight2.position.set(-100, -50, -50);
+            scene.add(directionalLight2);
+
+            // 6. 生成 3D 實體花瓣群
+            create3DPetals();
+
+            // 7. 處理視窗大小改變
+            window.addEventListener('resize', onWindowResize, false);
+            
+            // 啟動渲染迴圈
+            animate();
+        }
+
+        function create3DPetals() {
+            // 動態繪製一片具備漸層的高解析度花瓣紋理
+            const canvas = document.createElement('canvas');
+            canvas.width = 128; canvas.height = 128;
+            const ctx = canvas.getContext('2d');
+            
+            ctx.beginPath();
+            ctx.moveTo(64, 10);
+            ctx.bezierCurveTo(100, 10, 118, 50, 64, 118);
+            ctx.bezierCurveTo(10, 50, 28, 10, 64, 10);
+            
+            const grad = ctx.createLinearGradient(64, 10, 64, 118);
+            grad.addColorStop(0, '#ffffff'); // 瓣尖白
+            grad.addColorStop(0.5, '#f48fb1'); // 瓣中粉
+            grad.addColorStop(1, '#c2185b'); // 瓣根深紅
+            
+            ctx.fillStyle = grad;
+            ctx.fill();
+
+            const texture = new THREE.CanvasTexture(canvas);
+            texture.encoding = THREE.sRGBEncoding;
+
+            // 實體材質：讓花瓣能反射光線，並擁有絲綢般的質感
+            const material = new THREE.MeshPhysicalMaterial({
+                map: texture,
+                side: THREE.DoubleSide, // 雙面渲染，翻轉時才看得到
+                transparent: true,
+                opacity: 0.9,
+                roughness: 0.4,
+                metalness: 0.1,
+                clearcoat: 0.2, // 表面微光
+                alphaTest: 0.1
+            });
+
+            // 花瓣模型 (使用微彎曲的平面)
+            const geometry = new THREE.PlaneGeometry(3, 3, 2, 2);
+            // 讓平面微彎，更有花瓣的立體感
+            const positions = geometry.attributes.position;
+            for(let i=0; i<positions.count; i++) {
+                const x = positions.getX(i);
+                const y = positions.getY(i);
+                // 創造碗狀彎曲
+                positions.setZ(i, (x*x + y*y) * -0.05);
+            }
+            geometry.computeVertexNormals();
+
+            const petalCount = 1200; // 1200 片 3D 花瓣
+
+            for (let i = 0; i < petalCount; i++) {
+                const petal = new THREE.Mesh(geometry, material);
+                
+                // 隨機分佈在球體空間內
+                const r = 40 + Math.random() * 300;
+                const theta = 2 * Math.PI * Math.random();
+                const phi = Math.acos(2 * Math.random() - 1);
+                
+                petal.position.x = r * Math.sin(phi) * Math.cos(theta);
+                petal.position.y = r * Math.sin(phi) * Math.sin(theta);
+                petal.position.z = r * Math.cos(phi);
+
+                // 隨機初始旋轉
+                petal.rotation.set(Math.random() * Math.PI, Math.random() * Math.PI, Math.random() * Math.PI);
+                
+                // 隨機大小
+                const scale = 0.5 + Math.random() * 1.5;
+                petal.scale.set(scale, scale, scale);
+
+                // 儲存物理運動屬性 (下落、旋轉、微風偏移)
+                petal.userData = {
+                    rotSpeed: {
+                        x: (Math.random() - 0.5) * 0.05,
+                        y: (Math.random() - 0.5) * 0.05,
+                        z: (Math.random() - 0.5) * 0.05
+                    },
+                    fallSpeed: 0.1 + Math.random() * 0.3,
+                    driftSpeed: (Math.random() - 0.5) * 0.2,
+                    orbitSpeed: (Math.random() - 0.5) * 0.002
+                };
+
+                petals.push(petal);
+                scene.add(petal);
+            }
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            
+            // 讓每一片花瓣各自進行 3D 物理運動
+            petals.forEach(petal => {
+                const data = petal.userData;
+                
+                // 1. 3D 翻滾
+                petal.rotation.x += data.rotSpeed.x;
+                petal.rotation.y += data.rotSpeed.y;
+                petal.rotation.z += data.rotSpeed.z;
+                
+                // 2. 飄落與微風 (Y軸下降，X軸偏移)
+                petal.position.y -= data.fallSpeed;
+                petal.position.x += data.driftSpeed;
+                
+                // 3. 圍繞中心的微弱公轉
+                const x = petal.position.x;
+                const z = petal.position.z;
+                petal.position.x = x * Math.cos(data.orbitSpeed) - z * Math.sin(data.orbitSpeed);
+                petal.position.z = x * Math.sin(data.orbitSpeed) + z * Math.cos(data.orbitSpeed);
+
+                // 4. 無限循環：如果掉太低，重置到高空
+                if (petal.position.y < -200) {
+                    petal.position.y = 200;
+                    petal.position.x = (Math.random() - 0.5) * 400;
+                    petal.position.z = (Math.random() - 0.5) * 400;
+                }
+            });
+
+            if(isAutoRotating) controls.update(); 
+            renderer.render(scene, camera);
+        }
+
+        let stage = -1;
+        let isMuted = false;
+        let isUIHidden = false;
+        
+        // 契合總結的詩意碎片
+        const fragments = [
+            "繁花似錦", "歲月靜好", "落英繽紛", "化作春泥", 
+            "春華秋實", "花開花落", "十二花神", "歲月餘香", 
+            "百花齊放", "清風明月", "繁花入夢", "不染塵埃"
+        ];
+
+        window.onload = () => {
+            initThreeJS();
+            initFragments();
+            document.getElementById('poem-input').addEventListener('input', checkInput);
+        };
+
+        function startExperience() {
+            const startPanel = document.getElementById('stage-start');
+            startPanel.style.opacity = '0';
+            
+            setTimeout(() => {
+                startPanel.style.display = 'none';
+                
+                // 播放內嵌音效
+                const audio = document.getElementById('bg-music');
+                audio.volume = 0.5;
+                audio.play().catch(e => console.log("需使用者互動以播放音效"));
+                
+                document.getElementById('mute-btn').classList.remove('hidden');
+                document.getElementById('immersive-btn').classList.remove('hidden');
+                document.getElementById('progress-indicator').classList.remove('hidden');
+                
+                nextStage(0);
+            }, 1000);
+        }
+
+        function nextStage(targetStage) {
+            if (stage >= 0) {
+                const currentEl = document.getElementById(`stage-${stage}`);
+                if (currentEl) {
+                    currentEl.classList.remove('fade-in');
+                    currentEl.classList.add('fade-out');
+                    setTimeout(() => currentEl.classList.add('hidden'), 1000);
+                }
+            }
+            
+            stage = targetStage;
+            
+            setTimeout(() => {
+                const targetEl = document.getElementById(`stage-${stage}`);
+                if (targetEl && !isUIHidden) {
+                    targetEl.classList.remove('hidden', 'fade-out');
+                    targetEl.classList.add('fade-in');
+                }
+            }, stage === 0 ? 100 : 1000);
+
+            updateProgressDots();
+            if (stage === 2) {
+                 document.getElementById('progress-indicator').classList.add('fade-out');
+            }
+        }
+
+        function updateProgressDots() {
+            for (let i = 0; i < 3; i++) {
+                const dot = document.getElementById(`dot-${i}`);
+                if (dot) {
+                    if (i === stage) {
+                        dot.className = "progress-dot w-3 h-3 rounded-full bg-[#e0bfb8] transition-all duration-700 shadow-[0_0_15px_rgba(224,191,184,0.8)] scale-125";
+                    } else {
+                        dot.className = "progress-dot w-2 h-2 rounded-full bg-white/20 transition-all duration-700";
+                    }
+                }
+            }
+        }
+
+        function initFragments() {
+            const container = document.getElementById('fragment-container');
+            fragments.forEach(frag => {
+                const btn = document.createElement('button');
+                btn.className = "px-5 py-2.5 rounded-xl bg-black/40 hover:bg-[#b76e79]/30 border border-[#e0bfb8]/20 text-gray-200 hover:text-white text-sm md:text-base tracking-widest transition-all hover:scale-105 active:scale-95";
+                btn.innerText = frag;
+                btn.onclick = () => {
+                    const input = document.getElementById('poem-input');
+                    input.value = input.value ? `${input.value}，${frag}` : frag;
+                    checkInput();
+                };
+                container.appendChild(btn);
+            });
+        }
+
+        function clearInput() {
+            document.getElementById('poem-input').value = '';
+            checkInput();
+        }
+
+        function checkInput() {
+            const val = document.getElementById('poem-input').value.trim();
+            const btn = document.getElementById('submit-btn');
+            if (val.length > 0) {
+                btn.disabled = false;
+                btn.classList.remove('opacity-40', 'cursor-not-allowed');
+                btn.classList.add('shadow-[0_0_20px_rgba(183,110,121,0.4)]');
+            } else {
+                btn.disabled = true;
+                btn.classList.add('opacity-40', 'cursor-not-allowed');
+                btn.classList.remove('shadow-[0_0_20px_rgba(183,110,121,0.4)]');
+            }
+        }
+
+        function submitPoem() {
+            const text = document.getElementById('poem-input').value.trim();
+            if (text) {
+                document.getElementById('final-poem-display').innerText = text;
+                nextStage(2);
+                
+                // 提交後加速環景旋轉與花瓣掉落，產生高潮昇華感
+                if(controls) controls.autoRotateSpeed = 2.0;
+                petals.forEach(p => p.userData.fallSpeed *= 2);
+                isAutoRotating = true;
+            }
+        }
+
+        // 音量控制
+        document.getElementById('mute-btn').addEventListener('click', function() {
+            const audio = document.getElementById('bg-music');
+            isMuted = !isMuted;
+            audio.muted = isMuted;
+            
+            if (isMuted) {
+                this.innerHTML = '<i data-lucide="volume-x" class="w-6 h-6"></i>';
+                this.classList.add('text-gray-500');
+            } else {
+                this.innerHTML = '<i data-lucide="volume-2" class="w-6 h-6"></i>';
+                this.classList.remove('text-gray-500');
+            }
+            lucide.createIcons();
+        });
+
+        // 沉浸模式切換
+        document.getElementById('immersive-btn').addEventListener('click', function() {
+            isUIHidden = !isUIHidden;
+            const uiContents = document.querySelectorAll('.ui-content');
+            
+            if (isUIHidden) {
+                uiContents.forEach(el => {
+                    if(!el.classList.contains('hidden')) {
+                        el.classList.remove('fade-in');
+                        el.classList.add('fade-out');
+                        setTimeout(() => el.classList.add('hidden'), 1000);
+                    }
+                });
+                this.innerHTML = '<i data-lucide="eye" class="w-6 h-6"></i>';
+                this.title = "顯示文字";
+                this.classList.add('bg-white/10');
+                isAutoRotating = true; 
+            } else {
+                const currentEl = document.getElementById(`stage-${stage}`);
+                if(currentEl) {
+                    currentEl.classList.remove('hidden', 'fade-out');
+                    currentEl.classList.add('fade-in');
+                }
+                if(stage < 2) {
+                    document.getElementById('progress-indicator').classList.remove('hidden', 'fade-out');
+                    document.getElementById('progress-indicator').classList.add('fade-in');
+                }
+                this.innerHTML = '<i data-lucide="eye-off" class="w-6 h-6"></i>';
+                this.title = "隱藏文字欣賞環景";
+                this.classList.remove('bg-white/10');
+            }
+            lucide.createIcons();
+        });
+    </script>
+</body>
+</html>
